@@ -1,0 +1,237 @@
+1. By default aioredis will return bytes for most Redis commands that return string replies. Redis error replies are known to be valid UTF-8 strings so error messages are decoded automatically.
+
+2. If you know that data in Redis is valid string you can tell aioredis to decode result by passing decode_responses=True in a command call:
+
+3. Both `pip` and `Poetry` are tools for managing Python packages, but they serve different purposes and have different features.
+
+---
+
+## **1. pip (Python Package Installer):**
+- **Purpose**: Installs and manages Python packages from the Python Package Index (PyPI).
+- **Scope**: Focuses only on package installation and dependency management.
+- **Dependency Resolution**: Basic dependency resolution; may lead to dependency conflicts in complex projects.
+- **Virtual Environment Management**: Does not manage virtual environments by default (but can work with `venv` or `virtualenv`).
+- **Package Management File**: Uses `requirements.txt` for listing dependencies.
+- **Lock File**: No built-in lock file (but can use `pip-compile` from `pip-tools` to generate a `requirements.txt` lock file).
+- **Ease of Use**: Simple and widely used but lacks advanced dependency management.
+
+### Example:
+```bash
+pip install requests
+```
+
+---
+
+## **2. Poetry:**
+- **Purpose**: A complete dependency and project management tool for Python.
+- **Scope**: Manages dependencies, virtual environments, and even packaging and publishing to PyPI.
+- **Dependency Resolution**: Advanced dependency resolver with better conflict handling.
+- **Virtual Environment Management**: Automatically creates and manages virtual environments.
+- **Package Management File**: Uses `pyproject.toml` to define dependencies and project metadata.
+- **Lock File**: Generates a `poetry.lock` file for reproducible builds.
+- **Ease of Use**: More comprehensive but has a learning curve.
+
+### Example:
+```bash
+poetry add requests
+```
+
+---
+
+## **Key Differences at a Glance:**
+| Feature                | pip                          | Poetry                           |
+|-----------------|-------------------|-------------------|
+| Package Management | Installs packages | Installs, manages, and publishes |
+| Dependency Resolution | Basic | Advanced |
+| Virtual Environment | External tools like `venv` | Built-in |
+| Lock File | No (requires `pip-tools`) | Yes (`poetry.lock`) |
+| Configuration File | `requirements.txt` | `pyproject.toml` |
+| Publishing to PyPI | Separate tools needed | Built-in command |
+
+---
+
+## **Which one to choose?**
+- Use **`pip`** for simple projects or when you want minimal overhead.
+- Use **`Poetry`** for larger projects, better dependency resolution, and complete project management (including publishing).
+
+---
+
+Let me know if you'd like an example of using either tool in a real-world project!
+
+4. https://medium.com/@arturocuicas/fastapi-and-redis-cache-a31ca832853e
+
+5. https://gist.github.com/nicksonthc/525742d9a81d3950b443810e8899ee0e
+
+6. https://redis.io/docs/latest/develop/clients/pools-and-muxing/
+
+7. source
+
+8. In Redis (specifically in `redis-py`), both `BlockingConnectionPool` and `ConnectionPool` manage connections to Redis servers, but they serve different purposes and have distinct behaviors.
+
+---
+
+## **1. `ConnectionPool`:**
+- **Purpose**: A standard connection pool that manages a fixed number of Redis connections.
+- **Behavior**: If all connections are in use and a new request comes in, it **raises an error** (e.g., `ConnectionError`) because no additional connections are available.
+- **Use Case**: Suitable for scenarios where you can handle connection failures gracefully or want to control the number of concurrent connections explicitly.
+- **Performance Impact**: Lightweight and efficient, but cannot handle high load situations where waiting for a connection is acceptable.
+
+### Example:
+```python
+from redis.asyncio.connection import ConnectionPool
+
+pool = ConnectionPool.from_url("redis://localhost:6379")
+```
+
+---
+
+## **2. `BlockingConnectionPool`:**
+- **Purpose**: A connection pool that **blocks and waits** when no connections are available.
+- **Behavior**: If all connections are in use, it will **wait for a specified timeout period** until a connection is released.
+- **Use Case**: Ideal for high-concurrency environments where waiting for an available connection is better than failing immediately.
+- **Customizable Options**:
+  - `max_connections`: The maximum number of connections allowed.
+  - `timeout`: How long to wait for a connection to become available before raising an error.
+
+### Example:
+```python
+from redis.asyncio.connection import BlockingConnectionPool
+
+pool = BlockingConnectionPool.from_url("redis://localhost:6379", max_connections=10, timeout=5)
+```
+
+---
+
+## **Key Differences at a Glance:**
+
+| Feature                  | `ConnectionPool`                | `BlockingConnectionPool`        |
+|----------------|--------------------|--------------------|
+| Handling of Exhausted Pool | Raises an error | Blocks and waits |
+| Use Case | Low to moderate traffic | High concurrency |
+| Customizable Timeout | No | Yes |
+| Performance Impact | Lightweight | Slightly higher due to waiting mechanism |
+
+---
+
+## **Which One to Use?**
+- Use **`ConnectionPool`** if you want **immediate error feedback** when connections are exhausted.
+- Use **`BlockingConnectionPool`** if you want to **handle temporary spikes in traffic** and can afford to wait for an available connection.
+
+---
+
+Let me know if you'd like more details or examples on how to use them effectively!
+
+9. In your previous approach, the Redis connection object was not explicitly closed before the event loop was shut down. As a result, when Python’s garbage collector later tried to clean up the connection (by calling its `__del__` method), it attempted to run cleanup code (like closing sockets) on an event loop that was already closed. This is why you saw the error:
+
+```
+RuntimeError: Event loop is closed
+```
+
+### **What Happened?**
+- **Event Loop Closure:** When you use `asyncio.run(main())`, it creates a new event loop, runs your `main()` function, and then closes the loop once `main()` completes.
+- **Delayed Cleanup:** The Redis connection object stayed alive even after `main()` finished. Its destructor (`__del__`) eventually ran when the object was garbage collected.
+- **Issue:** At that time, the event loop was already closed, so any asynchronous cleanup code in `__del__` could not run properly, leading to the error.
+
+### **How the New Solution Fixes It**
+- **Explicit Cleanup:** In the new solution, you explicitly call `await Redis.close()` *within* the `main()` function, while the event loop is still active.
+- **Proper Shutdown:** This ensures that the Redis connection is properly closed (its asynchronous cleanup code is executed) before the event loop shuts down.
+- **No Late Destructor Call:** Because the connection is closed explicitly and set to `None`, there is no pending cleanup that runs after the event loop has been closed, avoiding the error.
+
+### **In Simple Words**
+- **Before:** The Redis connection was like leaving a light on in a room that’s about to be locked. When someone later came to turn it off (the cleanup method), the room was already locked (the event loop was closed), so they couldn’t do it.
+- **Now:** You turn off the light (close the connection) *before* locking the room (closing the event loop). This way, everything is properly cleaned up without any errors.
+
+This is why the explicit close method works—it ensures cleanup happens at the right time, preventing any cleanup code from running on a closed event loop.
+
+10. https://redis.io/docs/latest/develop/use/keyspace/#:~:text=Redis%20keys%20are%20binary%20safe,are%20not%20a%20good%20idea.
+
+11. To set a Redis key with a Time-To-Live (TTL), you can use the EXPIRE or SETEX command. EXPIRE sets the expiration time in seconds after setting the key, while SETEX sets both the key and its expiration time in a single command. 
+
+12. ### Difference between `ujson`, `orjson`, and `json` in Python:
+
+### 1. **`json` (Built-in Python Library)**
+- **Part of the standard library** (no need to install separately).
+- Written in **pure Python**, with some parts implemented in C for performance.
+- **Slowest** among the three, but **highly compatible** with the Python ecosystem.
+- Supports **custom encoders and decoders**, making it flexible.
+- **Strict JSON standard compliance**.
+
+✅ Pros:
+- Built-in, no installation required.
+- Highly compatible and customizable.
+
+❌ Cons:
+- Slower compared to `ujson` and `orjson`.
+- Higher memory usage.
+
+---
+
+### 2. **`ujson` (UltraJSON)**
+- **Faster than `json`**, but **less strict** in JSON standard compliance.
+- Written in **C**, optimized for speed.
+- Not well-maintained in recent years, leading to compatibility issues with newer Python versions.
+
+✅ Pros:
+- Much faster than the standard `json`.
+- Suitable for simple and performance-critical tasks.
+
+❌ Cons:
+- Not strictly JSON-compliant (e.g., issues with handling `Infinity`, `NaN`, and datetime objects).
+- Less active development and support.
+
+---
+
+### 3. **`orjson` (Optimized Rust JSON)**
+- The **fastest JSON library** in Python, written in **Rust**.
+- Supports **dataclass serialization**, `datetime` handling, and `numpy` data structures.
+- **Strict JSON compliance**, while still being extremely fast.
+- Supports **pretty-printing** and **non-blocking I/O**.
+
+✅ Pros:
+- Fastest performance.
+- Better handling of complex data types like `datetime`, `dataclasses`, and `numpy`.
+- Actively maintained and widely adopted.
+
+❌ Cons:
+- Requires installing the Rust toolchain for compilation.
+- Less customizable compared to `json`.
+
+---
+
+### 📊 **Performance Benchmark (Approximate)**
+| Library | Speed | JSON Compliance | Customization | Maintenance |
+|---------|--------|-----------------|----------------|----------------|
+| `json`   | Slow      | High                   | High                     | Actively maintained |
+| `ujson` | Medium | Low                   | Low                       | Poor maintenance |
+| `orjson` | Fastest | High                  | Medium                | Actively maintained |
+
+---
+
+### ✅ **When to Use Which?**
+- Use `json` for **compatibility** and **customization**.
+- Use `ujson` for **speed** if strict JSON compliance isn't critical.
+- Use `orjson` for **maximum performance** and **handling complex data types**.
+
+---
+
+Let me know if you'd like a hands-on example of each! 😊
+
+13. n Python, __init__.py is a special file that is used to mark a directory as a Python package.
+
+📌 Purpose of __init__.py:
+Identifies a package: Without this file, Python would not treat a directory as a package.
+Controls package imports: You can define which modules or functions should be accessible when the package is imported.
+Initial setup or configuration: Code inside __init__.py can be used to initialize data, import submodules, or define global variables.
+
+
+14. By default, Redis uses db=0
+
+15. https://www.youtube.com/watch?v=pPqazMTzNOM
+
+16. https://www.youtube.com/watch?v=tip2mgC6rwQ
+
+17. https://www.youtube.com/@MichaelsTechTutorials/playlists
+
+18. 
+
+

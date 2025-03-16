@@ -1,0 +1,6 @@
+redis==5.0.8
+fastapi==0.115.11
+python-dotenv==1.0.1
+uvicorn==0.34.0
+pytest==8.3.5
+orjson==3.10.15
